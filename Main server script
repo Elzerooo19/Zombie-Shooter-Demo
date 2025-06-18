@@ -1,4 +1,5 @@
 -- The second application with a new advanced game with considering the previous feedbacks, used tables as modules as far as I could.
+-- If the game has issues like the NPCs not moving or the the gun not working it is because i'm having issues with the drafts and commiting system, working on updating the game.
 -- table for servies initilization 
 local SERVICES = {
 	-- Main services
