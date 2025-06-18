@@ -1,0 +1,531 @@
+-- The second application with a new advanced game with considering the previous feedbacks, used tables as modules as far as I could.
+-- table for servies initilization 
+local SERVICES = {
+	-- Main services
+	DataStore = game:GetService("DataStoreService"), -- Persistent data storage
+	ServerStorage = game:GetService("ServerStorage"), -- Server-side storage for NPC model with its script
+	Players = game:GetService("Players"), -- Player management
+	SoundService = game:GetService("SoundService"), -- Audio control
+	Remote = game.ReplicatedStorage.RemoteEvents ,-- Client-server communication
+
+	-- Custom services (data stores)
+	KillsDataStore =  game:GetService("DataStoreService"):GetDataStore("Kills"), -- Player Kills data storage
+	LevelDataStore =  game:GetService("DataStoreService"):GetDataStore("Level")  -- Player Levels data storage
+}
+
+-- table for the remote events either client/server or server/client
+local EVENTS = {
+
+	FirePistol = SERVICES.Remote.FirePistol, 
+	ReloadPistol = SERVICES.Remote.ReloadPistol,
+	MagAmmoUpdate = SERVICES.Remote.MagAmmoUpdate,
+	ReserveAmmoUpdate = SERVICES.Remote.ReserveAmmoUpdate,
+	BulletRayCast = SERVICES.Remote.BulletRayCast,
+	NewKill = SERVICES.Remote.NewKill,
+	levelUP = SERVICES.Remote.LevelUp
+}
+
+ -- table for initializing the sounds used in the game
+local Sounds = {
+	
+	LootPickUP = SERVICES.SoundService.ItemPickUp,
+	BulletHit = SERVICES.SoundService.BulletHitSound,
+	NoAmmo = SERVICES.SoundService.NoAmmoSound,
+	PistolShoot = SERVICES.SoundService.PistolShootSound,
+	Reload = SERVICES.SoundService.ReloadSound,
+	kill = SERVICES.SoundService.KillSound,
+	LevelUP = SERVICES.SoundService.LevelUpSound,
+	DMGsound = SERVICES.SoundService.DMGsound
+}
+
+-- table for the damage multipliers when hitting different parts of the NPC body
+local DamageMulti = {
+	
+	Head = 2, -- x2 damage when shot in the head
+	HumanoidRootPart = 1.5, -- x1.5 damage when shot in the torso / humanoid root part 
+	Default = 1 -- default damage when shot in other parts of the body
+}
+
+local ConfigNPC = {
+	
+	NPCsFolder = workspace:WaitForChild("NPCsFolder"), -- Folder to store the spawned NPCs in one place for better organization
+	NPCModel = SERVICES.ServerStorage.NPC, -- getting the NPC model from server storage
+	spawnRadius = 70, -- spawn radius around the player
+	livingNPC = 0, -- currently ALIVE spawned NPCs
+	maxNPC = 10 -- Max living NPC's (zombies)
+}
+
+local UTILTY = {
+
+	lootCoolDown = 30, -- sec
+	Enabled_Transparency = 0.2, -- transparency of the loot when it is available to be collected
+	disabled_Transparency = 0.9, -- transparency of the loot when it is un-available to be collected
+
+	Ammo = 10, -- Ammo added when collecting ammo loot
+	MaxReserveAmmo = 100, -- Max Reserve ammo 
+	FullMag = 15, -- Max Magazine ammo 
+	ReloadCooldown = 2, -- sec
+	fullAmmo = false,  -- boolean to check if he player's reserve ammo capacity is full
+	BulletDMG = 18, -- Damage of the bullet on hit
+	Killed = false, -- boolean to check if the zombie is killed
+	ValidateShot = false, -- boolean to check if the player has ammo in the mag to shoot 
+	Health = 20, -- Health added when collecting health loot
+	MaxHealth = 100, -- the max health for the player
+
+	SpeedBoost = 2, -- Double the Walkspeed
+	SpeedBoostDuration = 15, -- seconds
+	debounceSB = false, -- debounce for the speed boost
+
+	PlayerKills = {}, -- table to get and store player kills temporarily to avoid calling the data store too many times
+	PlayerLevel = {},  -- table to get and store player Level temporarily to avoid calling the data store too many times
+	Levels = {} -- Levels players can reach by killing zombies (NPC)
+}
+
+function UTILTY.getReserveAmmo(player)  -- function to get the player's reserve ammo
+
+	if player then  -- Checking if the player exists
+		return player:GetAttribute("ReserveAmmo")  -- Returns nil if the get attribute didn't load
+	end
+end 
+
+function UTILTY.getMagAmmo(player)  -- function to get the player's magazine ammo
+
+	if player then  -- Checking if the player exists
+		return player:GetAttribute("MagazineAmmo")  -- Returns nil if the get attribute didn't load
+	end
+end 
+
+function UTILTY.setReserveAmmo(player, amount) -- function to update the player's reserve ammo
+
+	if player then -- player existence check
+		player:SetAttribute("ReserveAmmo", amount)  -- Setting the player's Reserve Ammo with an updated ammo amount
+	end
+end
+
+
+function UTILTY.setMagAmmo(player, amount) -- function to update the player's magazine ammo
+
+	if player then -- player existence check
+		player:SetAttribute("MagazineAmmo", amount)  -- Setting the player's Magazine Ammo with an updated ammo amount  
+	end
+end
+
+function UTILTY.NPCspawn() -- function to get an NPC (Zombie) clone from the original model to spawn around the player in a random point on a fixed radius circle
+	
+	if ConfigNPC.livingNPC >= ConfigNPC.maxNPC then return end -- Checking if the number of currently alive NPCs is more than or equal the max limit and returning end if so
+
+	local randomAngle = math.random(0, 360) -- random angle to spawn the NPC on a random point with a constant distance from the player on a point of the virtual circle with "SpawnRadius" radius
+	local x = ConfigNPC.spawnRadius * math.cos(math.rad(randomAngle)) -- getting the x and z position of the NPC 
+	local z = ConfigNPC.spawnRadius * math.sin(math.rad(randomAngle))
+	local spawnPos = Vector3.new(x, 1, z)  -- determining the spawning position of the NPC (Zombie)
+	
+	local NPC = ConfigNPC.NPCModel:Clone() -- cloning the original NPC (Zombie) model to spawn around the player
+	NPC.HumanoidRootPart.Position = spawnPos -- setting the position of the NPC (Zombie) to the determined position 
+	NPC.Parent = ConfigNPC.NPCsFolder -- setting the parent of the NPC to NPCs folder in the workspace
+
+	ConfigNPC.livingNPC += 1 -- Increasing the number of alive NPCs by 1 to keep track of the alive NPCs
+end
+
+function UTILTY.CalcDMG (hitPart) -- function to calculate the damage based on the part that is hit
+	
+	local multiplier = DamageMulti[hitPart.Name] or DamageMulti.Default -- getting the multiplier , if hit a limb the multiplier is default (1x)
+	return UTILTY.BulletDMG * multiplier -- Base damage * multiplier of the part which is hit 
+end
+
+function UTILTY.DealDMG (hitParent, DMG) -- function to deal damage to the NPC (Zombie)
+	
+	if hitParent:FindFirstChild("Humanoid") then  -- Checking if the parent of the part hit has a humanoid
+		hitParent.Humanoid.Health -= DMG -- Dealing the damage
+		return hitParent.Humanoid.Health -- returning the health of the humanoid after dmg
+	end
+end
+
+function UTILTY.KillCheck (HealthNPC, HitParent) -- function to check if the shot killed the NPC (zombie)
+	
+	if HealthNPC == 0 then -- if the npc died then
+		
+		HitParent:Destroy() -- Destroy the NPC
+		ConfigNPC.livingNPC -= 1 -- decrease the alive NPCs counter by 1
+		Sounds.kill:Play() -- playing the kill sound effect 
+		UTILTY.Killed = true -- NPC has been killed by the player who casted the Ray (Shot the Bullet)
+    end 
+end
+
+function UTILTY.KillAdd (player) -- Adding the kill to the player's score after a succesful NPC kill
+	
+	UTILTY.PlayerKills[player.UserId] += 1  -- adding the kill in kills table which the datastore is updated from
+	player.leaderstats.Kills.Value += 1 -- adding it in the leaderstats kills value 
+	EVENTS.NewKill:FireClient(player) -- Kill visualization for the player by firing an event which will make the kill gui visible
+end
+
+function UTILTY.LevelAdd (player) -- function to level up the player if he had reached the required kills for a level up
+	
+	local kills = UTILTY.PlayerKills[player.UserId] -- getting the player's kills
+	local level = UTILTY.PlayerLevel[player.UserId] -- getting the player's level
+	
+	if level + 1 <= math.floor(math.sqrt(kills)) then -- checking if the player has enough kills to level up
+		
+		Sounds.LevelUP:Play() -- playing the level up sound effect
+		level += 1 -- adding the level
+		UTILTY.PlayerLevel[player.UserId] = level -- setting the new level in the table
+		player.leaderstats.Level.Value = level -- setting the new level in the player's leaderstats level value
+		EVENTS.levelUP:FireClient(player, level) -- firing the level up event to the player to show the level up gui
+	end
+end
+	
+function UTILTY.safeAddAmmo(player, amount, ammo)
+
+	UTILTY.fullAmmo = false -- Setting the full ammo to false initially before checking if the ammo is full
+	local ReserveAmmo = UTILTY.getReserveAmmo(player) -- getting the player's reserve ammo 
+
+	while not ReserveAmmo and ReserveAmmo ~= 0 do  -- delaying the function for 0.1 sec until the ammo loads and checking that it doesn't load and the amount of ammo is 0 to avoid infinty loop  
+		task.wait(0.1) -- Yield briefly
+		ReserveAmmo = UTILTY.getReserveAmmo(player) -- Getting the player's ammo again
+	end
+
+	if ReserveAmmo == UTILTY.MaxReserveAmmo then -- Checking if the ammo is full
+
+		UTILTY.fullAmmo = true -- Setting the full ammo to true if it is full
+		UTILTY.FullCapacityCooldown (ammo) -- Cool down to avoid many unneccesary touches if the ammo is full
+		return -- quitting the function if the ammo is full
+
+	end 
+
+	UTILTY.setReserveAmmo(player, math.min(ReserveAmmo + amount, UTILTY.MaxReserveAmmo)) -- if the ammo final amount is more than 100, it will set it to 100 (Max capacity)
+	EVENTS.ReserveAmmoUpdate:FireClient(player, math.min(ReserveAmmo + amount, UTILTY.MaxReserveAmmo)) -- setting the new ammo value in the client gui
+	Sounds.LootPickUP:Play() -- Loot pick up sound effect
+end
+
+local debounce = false -- debounce to avoid spamming the reload function
+function UTILTY.Reload (player) -- reloading function
+	
+	if debounce then return end  -- if the debounce is true, it will quit the function
+	-- if the debounce is false, it will continue the function
+	debounce = true -- Setting the debounce to true to prevent spamming
+	local ReserveAmmo = UTILTY.getReserveAmmo(player) -- getting player's reserve ammo using the getReserveAmmo function
+	local MagAmmo = UTILTY.getMagAmmo(player) -- getting player's mag ammo using the getMagAmmo function
+	local requiredAmmo = UTILTY.FullMag - MagAmmo -- getting the required ammo to fill the mag (e.g 15 -8 , 7 bullets are required to full the mag)
+
+	if ReserveAmmo == 0 then -- if insufficient ammo to reload the mag play err sound
+		
+		Sounds.NoAmmo:play() -- play error sound
+		debounce = false -- setting the debounce to false to allow the player to reload again if he got ammo 
+		return -- quit the function
+	end 
+	
+	if MagAmmo == UTILTY.FullMag then  -- if the mag is already full we will quit the function
+		
+		debounce = false -- setting the debounce to false to allow the player to reload again if he got ammo
+		return -- quit the function
+    end
+	
+	Sounds.Reload:Play() -- playing the reload sound
+	-- animation (I don't have one) but u get the idea 
+	-- can play gui visualization using remote events and so on
+	task.wait(UTILTY.ReloadCooldown) -- wait until the reload is complete 
+
+
+	if ReserveAmmo >= requiredAmmo then -- Checking  if there is suffeicient ammo to fill the mag
+
+		UTILTY.setMagAmmo(player, UTILTY.FullMag) -- completely fill the mag
+		EVENTS.MagAmmoUpdate:FireClient(player, UTILTY.FullMag) -- GUI update using remote events
+		ReserveAmmo -= requiredAmmo 
+		UTILTY.setReserveAmmo(player, ReserveAmmo) -- setting the remaining reserve ammo after taking the required ammo from it 
+		EVENTS.ReserveAmmoUpdate:FireClient(player, ReserveAmmo) -- GUI update using remote events
+		debounce = false -- setting the debounce to false to allow the player to reload again
+		return -- quit the function
+	end
+
+	local reloadedAmmo = ReserveAmmo + MagAmmo -- if there is not enough ammo in the reserve to fill the mag, we will fill it with the remaining reserve ammo
+	UTILTY.setMagAmmo(player, reloadedAmmo)  -- setting the mag ammo with whatever ammo we are left with 
+	EVENTS.MagAmmoUpdate:FireClient(player, reloadedAmmo)  -- GUI update using remote events
+	UTILTY.setReserveAmmo(player, 0) -- setting the reserve ammo to 0 because we took all of the ammo left in it
+	EVENTS.ReserveAmmoUpdate:FireClient(player, 0) -- GUI update using remote events
+	debounce = false  -- setting the debounce to false to allow the player to reload again
+end
+
+function UTILTY.CollectLoot (PickupItem) -- Making the loot unaviliable for a cooldown and visualizing it for the players
+
+	PickupItem.Transparency = UTILTY.disabled_Transparency -- Collected (disabled) visualization
+	PickupItem:SetAttribute("Enabled", false) -- Setting the PickupItem to unavailable to collect (enabled attribute is false)
+	task.wait(UTILTY.lootCoolDown) -- Waiting for the loot cooldown to re-enable the ammo
+	PickupItem.Transparency = UTILTY.Enabled_Transparency -- Re-enabled visualization
+	PickupItem:SetAttribute("Enabled", true) -- Setting the PickupItem to available to collect (enabled attribute is true)
+end
+
+function UTILTY.FullCapacityCooldown (PickupItem) -- To avoid spam touches when the player can't get the loot because he is full
+
+	PickupItem:SetAttribute("Enabled", false) -- Setting the PickupItem to unavailable to collect (enabled attribute is false)
+	task.wait(2)  -- short cooldown 
+	PickupItem:SetAttribute("Enabled", true) -- avoiding many unnecessary touches for optimization
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+local CollectFunctions = {} -- Table for the loot collection functions which are triggered whenever the player touches the loot
+
+function CollectFunctions.onTouchHealthPickup(otherPart, healthPickup) -- function which is connected to the touched event of the health pick ups
+	if healthPickup:GetAttribute("Enabled") then -- Checking if the health is available to collect (enabled)
+
+		local character = otherPart.Parent -- Getting the character of the player that touched the health pick up
+		local humanoid = character:FindFirstChildWhichIsA("Humanoid") -- Getting the humanoid of the character
+
+		if humanoid.Health == UTILTY.MaxHealth then -- Checking if the player's health is full 
+
+			UTILTY.FullCapacityCooldown (healthPickup) -- If the player's health is full we will call the full capacity cooldown function to avoid unnecessary touches
+			return -- quit the function
+		end 
+
+
+		if humanoid then -- Checking if the humanoid exists
+			
+			Sounds.LootPickUP:Play() -- Loot pick up sound effect
+			humanoid.Health += UTILTY.Health -- Healing the player with the health amount of the health pickups
+			UTILTY.CollectLoot(healthPickup) -- Calling the collecting loot function to disable the loot collected and visualizing it
+		end
+	end
+end
+
+function CollectFunctions.onTouchAmmo (otherpart, ammo) -- the function which will be connected to the touched event of the ammo pick ups
+	if ammo:GetAttribute("Enabled") then -- Checking if the ammo is available to collect (enabled)
+
+		local character = otherpart.Parent  -- Getting the character of the player that touched the ammo
+		local player = SERVICES.Players:GetPlayerFromCharacter(character) -- Getting the player who touched the ammo from the Players Service			
+
+		UTILTY.safeAddAmmo(player, UTILTY.Ammo, ammo) -- adding the ammo to the player's reserve ammo 
+
+		if  UTILTY.fullAmmo == false then -- Checking if ammo is not full by getting the full ammo bool value which is changed from the functions above 
+
+			UTILTY.CollectLoot(ammo) -- Calling the collecting loot function to disable the loot collected and visualizing it 
+		end 
+	end
+end
+
+
+function CollectFunctions.onTouchSpeedBoost (otherpart, speedboost) -- the function which will be connected to the touched event of the ammo pick ups
+	if speedboost:GetAttribute("Enabled") then -- Checking if the speed boost is available to collect (enabled)
+
+		local character = otherpart.Parent -- Getting the character of the player that touched the speed boost
+		local humanoid = character:FindFirstChildWhichIsA("Humanoid") -- Getting the humanoid of the character
+	
+
+		if humanoid then -- humanoid check
+			
+			if UTILTY.debounce then return end -- if the player already has a speed boost 
+			
+			humanoid.WalkSpeed = UTILTY.SpeedBoost * humanoid.WalkSpeed -- doubling the speed of the player
+			UTILTY.debounce = true
+			
+			task.delay(UTILTY.SpeedBoostDuration, function() -- task delay to make the speed boost work for its duration away from the loot cooldown duration and doesn't increase the loot cooldown duration
+				
+				humanoid.WalkSpeed = humanoid.WalkSpeed / UTILTY.SpeedBoost -- returning the player's speed back to normal
+				UTILTY.debounce = false -- setting the deobounce back to false after making the player's speed normal again
+			end)
+
+			Sounds.LootPickUP:Play() -- Loot pick up sound effect
+			UTILTY.CollectLoot(speedboost) -- Calling the collecting loot function to disable the loot collected and visualizing it
+		end
+	end
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+local PlayerInitialize = {} -- Table to store general player functions which is called whenever a player joins 
+
+function PlayerInitialize.LevelStore(player) -- creating function to store the player's levels from the datastore or setting a new if it is the player's first time
+	local success, StoredPlrLevel = pcall(function() -- pcall is used to catch errors and return a boolean and a value if an error was caught while trying to get the player's data
+		return SERVICES.LevelDataStore:GetAsync(player.UserId) -- Getting the player's level data from the datastore with his ID
+	end)
+
+	if success then -- Checking if the pcall was successful and the data was returned without errors
+		local currentLevel= 0 -- variable for cache and organization and the default value if there is no data stored found 
+		if StoredPlrLevel then 
+			currentLevel = StoredPlrLevel -- setting the player to his stored level
+		end
+		UTILTY.PlayerLevel[player.UserId] = currentLevel -- store the level in the cache data store table
+	else 
+		warn(`[DATASTORE ERROR] Failed to load level data for {player.Name} (UserId: {player.UserId}):`) -- warning the player's name and ID who encountered an err in getting his data 
+		warn(StoredPlrLevel) -- warning the error from the pcall function if there was one
+	end
+	
+end
+
+
+function PlayerInitialize.KillsStore(player) -- creating function to store the player's levels from the datastore or setting a new if it is the player's first time
+	local success, StoredPlrKills = pcall(function() -- pcall is used to catch errors and return a boolean and a value if an error was caught while trying to get the player's data
+		return SERVICES.KillsDataStore:GetAsync(player.UserId) -- Getting the player's kills data from the datastore with his ID
+	end)
+
+	if success then -- Checking if the pcall was successful and the data was returned without errors
+		local currentkills = 0 -- variable for cache and organization and the default value if there is no data stored found 
+		if StoredPlrKills then 
+			currentkills = StoredPlrKills --  setting the player to his stored kills
+		end	
+		UTILTY.PlayerKills[player.UserId] = currentkills -- store the kills in the cache data store table
+	else 
+		warn(`[DATASTORE ERROR] Failed to load level data for {player.Name} (UserId: {player.UserId}):`) -- warning the player's name and ID who encountered an err in getting his data 
+		warn(StoredPlrKills) -- warning the error from the pcall function if there was one
+	end
+	
+end
+
+function PlayerInitialize.leaderStats (player) -- function to create the leaderstats folder and values
+
+	local leaderstats = Instance.new("Folder") -- Creating a folder to store the player's stats
+	leaderstats.Name = "leaderstats" -- Setting the name of the folder to "leaderstats"
+	leaderstats.Parent = player -- putting the leaderstats folder in the player to make a unique leaderstats to each player
+
+	local kills = Instance.new("IntValue") -- Creating the kills int value for the player
+	kills.Name = "Kills" -- Setting the name of the kills value to "Kills"
+	kills.Value = UTILTY.PlayerKills[player.UserId] -- getting the player's kills from the cache table and setting it to the kills value
+	kills.Parent = leaderstats -- putting it in the player's leaderstats folder to be shown in the player's leaderstats
+
+
+	local level = Instance.new("IntValue") -- Creating the level int value for the player
+	level.Name = "Level" -- Setting the name of the level value to "Level"
+	level.Value = UTILTY.PlayerLevel[player.UserId] -- getting the player's level from the cache table and setting it to the level value
+	level.Parent = leaderstats -- putting it in the player's leaderstats folder to be shown in the player's leaderstats
+
+end
+
+function PlayerInitialize.AmmoAdding (player) -- function to add the player's ammo to his inventory and setting the attributes of the ammo
+	
+	player:SetAttribute("ReserveAmmo", UTILTY.MaxReserveAmmo) -- initializing the attribute of the player's ReserveAmmo and setting it to the max value of the ammo
+	player:SetAttribute("MagazineAmmo", UTILTY.FullMag) -- initializing the attribute of the player's MagazineAmmo and setting it to a full mag
+end
+
+function PlayerInitialize.onPlayerAdded(player) -- Adding all the functions in one function which is open to extensions and closed to modifications 
+
+	PlayerInitialize.KillsStore(player)  -- Getting the player Kills from the player kills Datastore
+	PlayerInitialize.LevelStore(player)  -- Getting the player level from the Player Level Datastore
+	PlayerInitialize.leaderStats(player) -- Creating a Leaderboard Stats for each player
+	PlayerInitialize.AmmoAdding(player)  -- Adding the player initial ammo and setting the ammo attributes
+
+end
+
+function PlayerInitialize.KillSave (player) -- protected call function to save the kills of the player
+	local success, errMSG = pcall(function()
+		SERVICES.KillsDataStore:SetAsync(player.UserId, UTILTY.PlayerKills[player.UserId]) --Syncing the kills of the player in the datastore with his level in the temporary data table using his ID
+	end)
+end
+
+function PlayerInitialize.LevelSave (player) -- protected call function to save the level of the player
+	local success, errMSG = pcall(function()
+		SERVICES.LevelDataStore:SetAsync(player.UserId, UTILTY.PlayerLevel[player.UserId]) --Syncing the level of the player in the datastore with his level in the temporary data table using his ID
+	end)
+end
+
+function PlayerInitialize.onPlayerRemoved (player) -- Added functions when the player is leaving from the game
+	PlayerInitialize.KillSave(player)  -- Saving the player kills
+	PlayerInitialize.LevelSave(player) -- Saving the player level
+end
+
+SERVICES.Players.PlayerAdded:Connect(PlayerInitialize.onPlayerAdded) --Adding the functions to each player that joins the game
+SERVICES.Players.PlayerRemoving:Connect(PlayerInitialize.onPlayerRemoved) -- Using the datastore to save only when the player is leaving the game to avoid data loss.
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- AMMO SYSTEM 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+local AmmoFolder = workspace:WaitForChild("Ammo") -- Waiting for the Ammo folder to load in workspace
+local AmmoPickups = AmmoFolder:GetChildren()  -- Getting all the ammo pickups
+
+for _,AmmoPickup in ipairs(AmmoPickups) do -- going through each ammo pickup in the ammo folder
+
+	AmmoPickup:SetAttribute("Enabled", true)  -- Setting the ammo to available to collect (enabled attribute is true)
+	AmmoPickup.Touched:Connect(function(otherpart)  -- Connecting the function that will handle the collection of the ammo when touched
+		CollectFunctions.onTouchAmmo(otherpart, AmmoPickup)  -- Calling the function that handles the collection of the health pickup
+	end)
+end
+
+
+EVENTS.FirePistol.OnServerEvent:Connect(function(player) -- Creating the function that will handle the firing of the pistol when the remote event is fired from the client
+
+	local MagAmmo = UTILTY.getMagAmmo(player)  -- getting the player's mag ammo using the function that gets the mag ammo
+	if MagAmmo > 0 then -- Check if there is enough mag ammo in the mag 
+		MagAmmo -= 1 -- deduct the mag ammmo count by 1
+		UTILTY.setMagAmmo(player, MagAmmo) -- updating the Mag ammo using the set mag ammo function
+		EVENTS.MagAmmoUpdate:FireClient(player, MagAmmo) -- updating the client of the new mag ammo count
+		UTILTY.ValidateShot = true -- validating the shot to create the ray cast
+		Sounds.PistolShoot:Play() -- playing the shot sound
+	
+	else 
+		UTILTY.Reload(player) -- Auto reload if the player tries to shoot with an empty mag 
+	end
+end)
+
+EVENTS.BulletRayCast.OnServerEvent:Connect(function (player , rayOrigin, rayDirection) -- creating the function that will handle the bullet raycast which is connected to the event fired from the client
+
+	local rayParams = RaycastParams.new() -- creating a new raycast params
+	rayParams.FilterDescendantsInstances = { player.Character } -- avoidiing player hitting himself
+	local rayResult = workspace:Raycast(rayOrigin, rayDirection, rayParams) -- getting the result of the raycast
+
+	if rayResult and UTILTY.ValidateShot then -- checking the result of the raycast 
+		
+		UTILTY.ValidateShot = false
+		local hitPart = rayResult.Instance -- getting the part that was hit by the ray
+		local hitPos = rayResult.Position -- getting the position where the ray hit the NPC
+		local hitParent = hitPart.Parent  -- getting the parent of the part that was hit by the ray
+
+		if not hitParent.Humanoid then return end  -- If the ray didn't hit an NPC then return end
+
+		local DMG = UTILTY.CalcDMG(hitPart) -- getting the damage of the bullet based on the part it hit
+		local NPCHealth = UTILTY.DealDMG(hitParent, DMG) -- dealing damage to the NPC
+		UTILTY.KillCheck(NPCHealth, hitParent) -- Checking if the NPC is dead 
+
+		if UTILTY.Killed then -- if the NPC is killed then add the kill to the player's score and check for a level up
+
+			UTILTY.KillAdd(player)  -- Adding the kill to the player's score 
+			UTILTY.LevelAdd(player) -- Checking if the player's level should be leveled up by checking if the player has enough kills
+			UTILTY.Killed = false -- back to false 
+		end 
+	end 
+end)
+
+EVENTS.ReloadPistol.OnServerEvent:Connect(UTILTY.Reload) -- Connecting the reload event which is fired when the player presses "R" to the reload function
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- Health System
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+local HealthFolder = workspace:WaitForChild("Healthpickups")
+local HealthPickups = HealthFolder:GetChildren()
+
+for _, healthPickup in ipairs(HealthPickups) do -- iterating through all the health pickups in the game
+
+	healthPickup:SetAttribute("Enabled", true) -- loot initilization to be availiable to be collected ("enabled")
+	healthPickup.Touched:Connect(function(otherPart) -- Loot touched event which will call a function depending on the player's loot amount
+		local player = SERVICES.Players:GetPlayerFromCharacter(otherPart.Parent) -- getting the player that touched the loot
+		
+		if player then  -- Player existence check 
+			CollectFunctions.onTouchHealthPickup(otherPart, healthPickup) -- Calling the function that handles the collection of the health pickup
+		end
+	end)
+
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- Speed Boost system
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+local SpeedBoostFolder = workspace:WaitForChild("SpeedBoost")
+local SpeedBoostpickups = SpeedBoostFolder:GetChildren()
+
+for _,SpeedBoost in ipairs(SpeedBoostpickups) do -- iterating through all the speed boost pickups in the game
+
+	SpeedBoost:SetAttribute("Enabled", true) -- Loot initilization to be available to collect ("enabled")
+	SpeedBoost.Touched:Connect(function(otherPart) -- Loot touched event which will call a function depending on the player's loot amount
+		CollectFunctions.onTouchSpeedBoost(otherPart, SpeedBoost) -- Calling that handles the collection of the speed boost pickup
+	end)
+
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- NPC Spawn system 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+while true do  -- inifinte loop that runs forever
+	UTILTY.NPCspawn() -- calling the function that spawns the NPCs every 5 seconds
+	task.wait(5) -- waiting 5 seconds before spawning the next NPC
+end
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
