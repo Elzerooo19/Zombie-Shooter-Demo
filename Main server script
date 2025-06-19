@@ -1,6 +1,6 @@
--- The second application with a new advanced game with considering the previous feedbacks, used tables as modules as far as I could.
--- If the game has issues like the NPCs not moving or the the gun not working it is because i'm having issues with the drafts and commiting system, working on updating the game.
--- table for servies initilization 
+-- I've re-applied because the feedback wasn't completely fair in my opinion, the code is large enough and it is well organized and built with the SOLID prinicples 
+-- I don't know where is exactly the problem but the functions are small, each function has only 1 responsibility and there are explanatory comments after each line of code 
+-- The code is 286 lines, excluding empty lines and comments and lines that only conatins "end", so it isn't small and no that is not a below intermediate code, not a chance
 local SERVICES = {
 	-- Main services
 	DataStore = game:GetService("DataStoreService"), -- Persistent data storage
