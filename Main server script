@@ -1,10 +1,15 @@
--- I've re-applied because the feedback wasn't completely fair in my opinion, the code is large enough and it is well organized and built with the SOLID prinicples 
--- I don't know where is exactly the problem but the functions are small, each function has only 1 responsibility and there are explanatory comments after each line of code 
--- The code is 286 lines, excluding empty lines and comments and lines that only conatins "end", so it isn't small and no that is not a below intermediate code, not a chance
+-- I've added a pop up dmg effect like the one in apex legends trying to make the functions as small as possible and all changed a little of the code to make sure that each function has an one and only reponsibility
+-- I didn't actually count the code last time i told deepseek to do so, So i've added a new feature and learned a new advanced way to comment and Now the code should be more than 200 lines. 
+-- I have read the whole code again and corrected an error in the kill check where the kill can be counted two times if u shoot a bullet after killing an NPC because the destory NPC takes time. 
+-- I have tried to use more complex syntax and API as i have been adviced.
+-- Please try to help me get accepted I've really studied to get accepted and considered all the given feedbacks lately, and if u still think it is not enough tru to help me by pointing the issue but i hope there won't be issues.
+
+-- table for servies initilization 
 local SERVICES = {
 	-- Main services
 	DataStore = game:GetService("DataStoreService"), -- Persistent data storage
 	ServerStorage = game:GetService("ServerStorage"), -- Server-side storage for NPC model with its script
+	TweenService = game:GetService("TweenService"), -- Smooth object and GUI transitions and movement
 	Players = game:GetService("Players"), -- Player management
 	SoundService = game:GetService("SoundService"), -- Audio control
 	Remote = game.ReplicatedStorage.RemoteEvents ,-- Client-server communication
@@ -39,19 +44,89 @@ local Sounds = {
 	DMGsound = SERVICES.SoundService.DMGsound
 }
 
--- table for the damage multipliers when hitting different parts of the NPC body
-local DamageMulti = {
+-- table for the damage multipliers and GUI DMG colors when hitting different parts of the NPC body
+local DamageInfo = {
 	
-	Head = 2, -- x2 damage when shot in the head
-	HumanoidRootPart = 1.5, -- x1.5 damage when shot in the torso / humanoid root part 
-	Default = 1 -- default damage when shot in other parts of the body
+	-- HeadShoot 
+	Head = {
+		damage = 2, -- double the normal bullet DMG
+		color = Color3.fromRGB(255, 0, 0)  -- Red , Dmg gui color
+	},
+	-- Torso shoot
+	HumanoidRootPart = {
+		damage = 1.5, -- one and half times the normal bullet DMG
+		color = Color3.fromRGB(255, 165, 0)  -- Orange , Dmg gui color
+	},
+	-- limbs shot
+	Default = {
+		damage = 1,-- the normal bullet damage
+		color = Color3.fromRGB(255, 255, 0)  -- Yellow , Dmg gui color
+	},
+	
+}
+
+-- Damage value lookup for hit body parts
+function DamageInfo.getDamageInfo(hitPart)
+	-- Get the name of the hit part (e.g. "Head", "Torso")
+	local partName = hitPart.Name
+
+	-- Check if we have special damage for this part
+	local data = DamageInfo[partName]
+
+	-- Return either the special damage or default damage
+	if data then 
+		return data.damage
+	else
+		return DamageInfo.Default.damage
+	end
+end
+
+-- Color lookup for hit body parts  
+function DamageInfo.getColorInfo(hitPart)
+	-- Get the name of the hit part
+	local partName = hitPart.Name
+
+	-- Check for special color for this part
+	local data = DamageInfo[partName]
+
+	-- Return special color or default color
+	if data then
+		return data.color
+	else
+		return DamageInfo.Default.color
+	end
+end
+
+local PopUpConfig = {
+	-- BillboardGui configuration for damage display: Controls the visual appearance of the damage popup
+	BillboardGui = {
+		Name = "MasterDamagePopup", -- Name for easy reference when accessing the GUI
+		AlwaysOnTop = true, -- Ensures visibility over other objects
+		Size = UDim2.new(2, 0, 2, 0),-- Width and height relative to parent (1.5x scale)
+	},
+
+	-- TextLabel configuration: Controls the appearance of the displayed text
+	TextLabel = {
+		Name = "DamageText", -- Identifier for the label
+		AnchorPoint = Vector2.new(0.5, 0.5),  -- Centers the label in the middle
+		Position = UDim2.new(0.5, 0, 0.5, 0),-- Positions at center of BillboardGui
+	    Size = UDim2.new(2, 0, 2, 0), -- Size relative to parent (2x scale)
+		TextScaled = true,  -- Automatically scales text to fit
+		BackgroundTransparency = 1, -- Makes background invisible
+		Font = Enum.Font.Sarpanch, -- just a font I liked
+		TextStrokeTransparency = 0, -- Enables text outline (0 = fully visible)
+		TextStrokeColor3 = Color3.new(1, 1, 1) -- White text outline
+	},
+	
+	tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut) -- tween info for the tweens for the damage popup
+
 }
 
 local ConfigNPC = {
 	
 	NPCsFolder = workspace:WaitForChild("NPCsFolder"), -- Folder to store the spawned NPCs in one place for better organization
 	NPCModel = SERVICES.ServerStorage.NPC, -- getting the NPC model from server storage
-	spawnRadius = 70, -- spawn radius around the player
+	spawnRadius = 40, -- spawn radius around the player
 	livingNPC = 0, -- currently ALIVE spawned NPCs
 	maxNPC = 10 -- Max living NPC's (zombies)
 }
@@ -129,7 +204,8 @@ end
 
 function UTILTY.CalcDMG (hitPart) -- function to calculate the damage based on the part that is hit
 	
-	local multiplier = DamageMulti[hitPart.Name] or DamageMulti.Default -- getting the multiplier , if hit a limb the multiplier is default (1x)
+	local HitPart = hitPart.Name
+	local multiplier = DamageInfo.getDamageInfo(hitPart) -- getting the multiplier , if hit a limb the multiplier is default (1x)
 	return UTILTY.BulletDMG * multiplier -- Base damage * multiplier of the part which is hit 
 end
 
@@ -141,15 +217,130 @@ function UTILTY.DealDMG (hitParent, DMG) -- function to deal damage to the NPC (
 	end
 end
 
-function UTILTY.KillCheck (HealthNPC, HitParent) -- function to check if the shot killed the NPC (zombie)
+-- Creates a damage popup GUI with randomized positioning
+function UTILTY.PopUpCreation()
+	-- Create GUI components
+	local PopUpBB = Instance.new("BillboardGui")  -- Container for damage text
+	local DmgText = Instance.new("TextLabel")     -- Actual damage number display
+
+	-- Apply configuration from PopUpConfig
+	for property, value in pairs(PopUpConfig.BillboardGui) do
+		PopUpBB[property] = value  -- Set all BillboardGui properties
+	end
+
+	for property, value in pairs(PopUpConfig.TextLabel) do
+		DmgText[property] = value  -- Set all TextLabel properties
+	end
+
+	-- Add random offset for visual variety
+	local offsetX = math.random(-1, 1)   -- Small left/right variation
+	local offsetY = math.random(1, 3)    -- Always floats upward (1-3 studs)
+	local offsetZ = math.random(-1, 1)   -- Small front/back variation
+	PopUpBB.StudsOffset = Vector3.new(offsetX, offsetY, offsetZ)
+
+	-- Parent the text to the billboard
+	DmgText.Parent = PopUpBB
+
+	return PopUpBB  -- Return complete GUI assembly
+end
+
+function UTILTY.PopUpUpdate (PopUpBB, DMG, hitPart) -- function to update the damage text and its color, to put it in the correct position on the Hit NPC 
+	-- Updating the text and its color
+	local HitPart =  hitPart.Name
+	local DmgText = PopUpBB.DamageText
+	DmgText.Text = DMG
+	DmgText.TextColor3 = DamageInfo.getColorInfo(hitPart)
 	
-	if HealthNPC == 0 then -- if the npc died then
-		
-		HitParent:Destroy() -- Destroy the NPC
-		ConfigNPC.livingNPC -= 1 -- decrease the alive NPCs counter by 1
-		Sounds.kill:Play() -- playing the kill sound effect 
-		UTILTY.Killed = true -- NPC has been killed by the player who casted the Ray (Shot the Bullet)
-    end 
+	
+	local humanoidRP = hitPart.Parent:FindFirstChild("HumanoidRootPart") -- getting the HumanoidRootPart of the hit NPC (Zombie)
+	PopUpBB.Adornee = humanoidRP -- setting the Adornee of the BillboardGui to the HumanoidRootPart of the hit NPC (Zombie) to follow the movement of the NPC
+	PopUpBB.Parent = humanoidRP -- setting the parent of the BillboardGui to the HumanoidRootPart of the hit NPC (Zombie)	
+end
+
+function UTILTY.PopUpTween(PopUpBB)
+    --[[
+        Handles a three-stage tween animation for damage popups:
+        1. Scales the BillboardGui (SizeTween)
+        2. Moves it upward (MoveUpTween)
+        3. Fades out the text (FadeTween)
+        Automatically destroys the GUI after completion.
+        
+        Parameters:
+        - PopUpBB: The BillboardGui instance containing the damage text
+    ]]
+
+	-- Get references
+	local DmgText = PopUpBB.DamageText -- The TextLabel displaying damage
+
+	-- Tween configuration
+	local tweenInfo = PopUpConfig.tweenInfo  -- Shared tween settings (duration, easing, etc.)
+
+	-- Define target properties for each tween
+	local targetSize = { Size = UDim2.new(1, 0, 1, 0) }  -- Target size (100% scale)
+	local targetStudsOffset = { StudsOffset = PopUpBB.StudsOffset + Vector3.new(0, 1, 0) }  -- Move up 1 stud
+	local targetTransparency = { TextTransparency = 1 }  -- Fully fade out text
+
+	-- Create individual tweens
+	local SizeTween = SERVICES.TweenService:Create(PopUpBB, tweenInfo, targetSize)  -- Initial scale animation
+	local MoveUpTween = SERVICES.TweenService:Create(PopUpBB, tweenInfo, targetStudsOffset)  -- Floating upward motion
+	local FadeTween = SERVICES.TweenService:Create(DmgText, tweenInfo, targetTransparency)  -- Text fade-out
+
+	-- Execute tweens in sequence
+	SizeTween:Play()  -- Start with scale animation
+	SizeTween.Completed:Wait()  -- Wait for scale to complete
+	MoveUpTween:Play()  -- Begin upward movement
+	FadeTween:Play()  -- Simultaneously start fade-out
+
+	-- Cleanup after fade completes
+	FadeTween.Completed:Connect(function()
+		PopUpBB:Destroy()  -- Remove the GUI when fully transparent
+	end)
+end
+
+
+function UTILTY.KillCheck(HealthNPC, HitParent)
+    --[[
+        Handles NPC death verification and cleanup.
+        Prevents duplicate kills and ensures safe destruction.
+
+        Parameters:
+        - HealthNPC: Current health of the NPC (number)
+        - HitParent: The model/instance being destroyed
+
+        Features:
+        1. Double-kill protection via 'IsDead' attribute
+        2. Asynchronous safe destruction
+        3. Full null-reference checking
+        4. Game state management
+    ]]
+
+	-- Validate target exists and isn't already dead
+	if not HitParent or not HitParent.Parent then
+		return  -- Exit if invalid target
+	end
+
+	-- Check if already processed as dead
+	if HitParent:GetAttribute("IsDead") then
+		return  -- Prevent duplicate kills
+	end
+
+	-- Death Check
+	if HealthNPC <= 0 then  -- Using <= for float safety (as it can be 0.0000001 or -0.000004 as an example)
+		-- Immediate flag to block duplicate processing
+		HitParent:SetAttribute("IsDead", true)
+
+		ConfigNPC.livingNPC -= 1  -- Decrement living counter
+		Sounds.kill:Play()  -- Play death sound
+		UTILTY.Killed = true  -- Flag global kill state
+
+		-- Delayed destruction ensures game state updates complete
+		task.delay(0.1, function()
+			-- Double-check existence before destruction
+			if HitParent and HitParent.Parent then
+				HitParent:Destroy()
+			end
+		end)
+	end
 end
 
 function UTILTY.KillAdd (player) -- Adding the kill to the player's score after a succesful NPC kill
@@ -316,7 +507,7 @@ function CollectFunctions.onTouchSpeedBoost (otherpart, speedboost) -- the funct
 			humanoid.WalkSpeed = UTILTY.SpeedBoost * humanoid.WalkSpeed -- doubling the speed of the player
 			UTILTY.debounce = true
 			
-			task.delay(UTILTY.SpeedBoostDuration, function() -- task delay to make the speed boost work for its duration away from the loot cooldown duration and doesn't increase the loot cooldown duration
+			task.delay(UTILTY.SpeedBoostDuration, function() -- task delay to make the speed boost work for its duration away from the loot cooldown duration and doesn't increase the cooldown duration
 				
 				humanoid.WalkSpeed = humanoid.WalkSpeed / UTILTY.SpeedBoost -- returning the player's speed back to normal
 				UTILTY.debounce = false -- setting the deobounce back to false after making the player's speed normal again
@@ -466,11 +657,16 @@ EVENTS.BulletRayCast.OnServerEvent:Connect(function (player , rayOrigin, rayDire
 		local hitPart = rayResult.Instance -- getting the part that was hit by the ray
 		local hitPos = rayResult.Position -- getting the position where the ray hit the NPC
 		local hitParent = hitPart.Parent  -- getting the parent of the part that was hit by the ray
-
+		
 		if not hitParent.Humanoid then return end  -- If the ray didn't hit an NPC then return end
 
 		local DMG = UTILTY.CalcDMG(hitPart) -- getting the damage of the bullet based on the part it hit
 		local NPCHealth = UTILTY.DealDMG(hitParent, DMG) -- dealing damage to the NPC
+		
+		local PopUpBB = UTILTY.PopUpCreation() -- Creating the billboard gui that will show the amount of damage the bullet did
+		UTILTY.PopUpUpdate (PopUpBB, DMG, hitPart)
+		UTILTY.PopUpTween(PopUpBB)
+		
 		UTILTY.KillCheck(NPCHealth, hitParent) -- Checking if the NPC is dead 
 
 		if UTILTY.Killed then -- if the NPC is killed then add the kill to the player's score and check for a level up
