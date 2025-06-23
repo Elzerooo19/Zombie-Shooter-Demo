@@ -3,6 +3,7 @@
 -- I have read the whole code again and corrected an error in the kill check where the kill can be counted two times if u shoot a bullet after killing an NPC because the destory NPC takes time. 
 -- I have tried to use more complex syntax and API as i have been adviced.
 -- Please try to help me get accepted I've really studied to get accepted and considered all the given feedbacks lately, and if u still think it is not enough tru to help me by pointing the issue but i hope there won't be issues.
+-- the DMG pop Up issue has been fixed using an event which uses fires the Color, DMG amount, NPC that was hit as parameters to the client script which handles the pop up effect and tweens.
 
 -- table for servies initilization 
 local SERVICES = {
@@ -28,7 +29,8 @@ local EVENTS = {
 	ReserveAmmoUpdate = SERVICES.Remote.ReserveAmmoUpdate,
 	BulletRayCast = SERVICES.Remote.BulletRayCast,
 	NewKill = SERVICES.Remote.NewKill,
-	levelUP = SERVICES.Remote.LevelUp
+	levelUP = SERVICES.Remote.LevelUp,
+	PopUp = SERVICES.Remote.PopUp
 }
 
  -- table for initializing the sounds used in the game
@@ -96,31 +98,6 @@ function DamageInfo.getColorInfo(hitPart)
 		return DamageInfo.Default.color
 	end
 end
-
-local PopUpConfig = {
-	-- BillboardGui configuration for damage display: Controls the visual appearance of the damage popup
-	BillboardGui = {
-		Name = "MasterDamagePopup", -- Name for easy reference when accessing the GUI
-		AlwaysOnTop = true, -- Ensures visibility over other objects
-		Size = UDim2.new(2, 0, 2, 0),-- Width and height relative to parent (1.5x scale)
-	},
-
-	-- TextLabel configuration: Controls the appearance of the displayed text
-	TextLabel = {
-		Name = "DamageText", -- Identifier for the label
-		AnchorPoint = Vector2.new(0.5, 0.5),  -- Centers the label in the middle
-		Position = UDim2.new(0.5, 0, 0.5, 0),-- Positions at center of BillboardGui
-	    Size = UDim2.new(2, 0, 2, 0), -- Size relative to parent (2x scale)
-		TextScaled = true,  -- Automatically scales text to fit
-		BackgroundTransparency = 1, -- Makes background invisible
-		Font = Enum.Font.Sarpanch, -- just a font I liked
-		TextStrokeTransparency = 0, -- Enables text outline (0 = fully visible)
-		TextStrokeColor3 = Color3.new(1, 1, 1) -- White text outline
-	},
-	
-	tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut) -- tween info for the tweens for the damage popup
-
-}
 
 local ConfigNPC = {
 	
@@ -215,86 +192,6 @@ function UTILTY.DealDMG (hitParent, DMG) -- function to deal damage to the NPC (
 		hitParent.Humanoid.Health -= DMG -- Dealing the damage
 		return hitParent.Humanoid.Health -- returning the health of the humanoid after dmg
 	end
-end
-
--- Creates a damage popup GUI with randomized positioning
-function UTILTY.PopUpCreation()
-	-- Create GUI components
-	local PopUpBB = Instance.new("BillboardGui")  -- Container for damage text
-	local DmgText = Instance.new("TextLabel")     -- Actual damage number display
-
-	-- Apply configuration from PopUpConfig
-	for property, value in pairs(PopUpConfig.BillboardGui) do
-		PopUpBB[property] = value  -- Set all BillboardGui properties
-	end
-
-	for property, value in pairs(PopUpConfig.TextLabel) do
-		DmgText[property] = value  -- Set all TextLabel properties
-	end
-
-	-- Add random offset for visual variety
-	local offsetX = math.random(-1, 1)   -- Small left/right variation
-	local offsetY = math.random(1, 3)    -- Always floats upward (1-3 studs)
-	local offsetZ = math.random(-1, 1)   -- Small front/back variation
-	PopUpBB.StudsOffset = Vector3.new(offsetX, offsetY, offsetZ)
-
-	-- Parent the text to the billboard
-	DmgText.Parent = PopUpBB
-
-	return PopUpBB  -- Return complete GUI assembly
-end
-
-function UTILTY.PopUpUpdate (PopUpBB, DMG, hitPart) -- function to update the damage text and its color, to put it in the correct position on the Hit NPC 
-	-- Updating the text and its color
-	local HitPart =  hitPart.Name
-	local DmgText = PopUpBB.DamageText
-	DmgText.Text = DMG
-	DmgText.TextColor3 = DamageInfo.getColorInfo(hitPart)
-	
-	
-	local humanoidRP = hitPart.Parent:FindFirstChild("HumanoidRootPart") -- getting the HumanoidRootPart of the hit NPC (Zombie)
-	PopUpBB.Adornee = humanoidRP -- setting the Adornee of the BillboardGui to the HumanoidRootPart of the hit NPC (Zombie) to follow the movement of the NPC
-	PopUpBB.Parent = humanoidRP -- setting the parent of the BillboardGui to the HumanoidRootPart of the hit NPC (Zombie)	
-end
-
-function UTILTY.PopUpTween(PopUpBB)
-    --[[
-        Handles a three-stage tween animation for damage popups:
-        1. Scales the BillboardGui (SizeTween)
-        2. Moves it upward (MoveUpTween)
-        3. Fades out the text (FadeTween)
-        Automatically destroys the GUI after completion.
-        
-        Parameters:
-        - PopUpBB: The BillboardGui instance containing the damage text
-    ]]
-
-	-- Get references
-	local DmgText = PopUpBB.DamageText -- The TextLabel displaying damage
-
-	-- Tween configuration
-	local tweenInfo = PopUpConfig.tweenInfo  -- Shared tween settings (duration, easing, etc.)
-
-	-- Define target properties for each tween
-	local targetSize = { Size = UDim2.new(1, 0, 1, 0) }  -- Target size (100% scale)
-	local targetStudsOffset = { StudsOffset = PopUpBB.StudsOffset + Vector3.new(0, 1, 0) }  -- Move up 1 stud
-	local targetTransparency = { TextTransparency = 1 }  -- Fully fade out text
-
-	-- Create individual tweens
-	local SizeTween = SERVICES.TweenService:Create(PopUpBB, tweenInfo, targetSize)  -- Initial scale animation
-	local MoveUpTween = SERVICES.TweenService:Create(PopUpBB, tweenInfo, targetStudsOffset)  -- Floating upward motion
-	local FadeTween = SERVICES.TweenService:Create(DmgText, tweenInfo, targetTransparency)  -- Text fade-out
-
-	-- Execute tweens in sequence
-	SizeTween:Play()  -- Start with scale animation
-	SizeTween.Completed:Wait()  -- Wait for scale to complete
-	MoveUpTween:Play()  -- Begin upward movement
-	FadeTween:Play()  -- Simultaneously start fade-out
-
-	-- Cleanup after fade completes
-	FadeTween.Completed:Connect(function()
-		PopUpBB:Destroy()  -- Remove the GUI when fully transparent
-	end)
 end
 
 
@@ -661,11 +558,11 @@ EVENTS.BulletRayCast.OnServerEvent:Connect(function (player , rayOrigin, rayDire
 		if not hitParent.Humanoid then return end  -- If the ray didn't hit an NPC then return end
 
 		local DMG = UTILTY.CalcDMG(hitPart) -- getting the damage of the bullet based on the part it hit
+		local Color = DamageInfo.getColorInfo(hitPart) -- getting the color of the gui which varies as a the hit part changes 
+		
 		local NPCHealth = UTILTY.DealDMG(hitParent, DMG) -- dealing damage to the NPC
 		
-		local PopUpBB = UTILTY.PopUpCreation() -- Creating the billboard gui that will show the amount of damage the bullet did
-		UTILTY.PopUpUpdate (PopUpBB, DMG, hitPart)
-		UTILTY.PopUpTween(PopUpBB)
+		EVENTS.PopUp:FireClient(player, DMG, Color, hitPart) -- Firing the event to the client to handle the damage popup and its properties which are the color and dmg amount and which NPC was hit
 		
 		UTILTY.KillCheck(NPCHealth, hitParent) -- Checking if the NPC is dead 
 
