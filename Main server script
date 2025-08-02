@@ -1,5 +1,4 @@
 -- I've added a pop up dmg effect like the one in apex legends trying to make the functions as small as possible and all changed a little of the code to make sure that each function has an one and only reponsibility
--- I didn't actually count the code last time i told deepseek to do so, So i've added a new feature and learned a new advanced way to comment and Now the code should be more than 200 lines. 
 -- I have read the whole code again and corrected an error in the kill check where the kill can be counted two times if u shoot a bullet after killing an NPC because the destory NPC takes time. 
 -- I have tried to use more complex syntax and API as i have been adviced.
 -- Please try to help me get accepted I've really studied to get accepted and considered all the given feedbacks lately, and if u still think it is not enough tru to help me by pointing the issue but i hope there won't be issues.
@@ -195,21 +194,7 @@ function UTILTY.DealDMG (hitParent, DMG) -- function to deal damage to the NPC (
 end
 
 
-function UTILTY.KillCheck(HealthNPC, HitParent)
-    --[[
-        Handles NPC death verification and cleanup.
-        Prevents duplicate kills and ensures safe destruction.
-
-        Parameters:
-        - HealthNPC: Current health of the NPC (number)
-        - HitParent: The model/instance being destroyed
-
-        Features:
-        1. Double-kill protection via 'IsDead' attribute
-        2. Asynchronous safe destruction
-        3. Full null-reference checking
-        4. Game state management
-    ]]
+function UTILTY.KillCheck(HealthNPC, HitParent) -- Ckecks if the NPC is dead or not and prevents double kill issue using "isDead" attribute
 
 	-- Validate target exists and isn't already dead
 	if not HitParent or not HitParent.Parent then
